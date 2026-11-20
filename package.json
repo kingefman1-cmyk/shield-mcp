@@ -1,0 +1,39 @@
+{
+  "name": "@caelaralabs/shield-mcp",
+  "version": "1.0.1",
+  "mcpName": "com.caelaralabs/shield",
+  "description": "Stdio MCP server for Caelara Shield: prompt screening, output validation, SSRF-guarded fetch and token/transaction screening. Stateless, zero runtime dependencies.",
+  "type": "module",
+  "main": "src/index.mjs",
+  "bin": {
+    "shield-mcp": "bin/shield-mcp.mjs"
+  },
+  "files": [
+    "bin",
+    "src",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node --test test/"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "security",
+    "prompt-injection",
+    "x402"
+  ],
+  "license": "MIT",
+  "author": "Caelara Labs <ops@caelaralabs.com>",
+  "homepage": "https://shield.caelaralabs.com",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kingefman1-cmyk/shield-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/kingefman1-cmyk/shield-mcp/issues"
+  }
+}
