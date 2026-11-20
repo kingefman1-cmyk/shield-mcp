@@ -1,7 +1,7 @@
 // Caelara Shield MCP server: newline-delimited JSON-RPC 2.0 over stdio.
 // Stateless. Request and response bodies are never logged or stored.
 
-export const SERVER_INFO = { name: 'caelara-shield', version: '1.2.0' }
+export const SERVER_INFO = { name: 'caelara-shield', version: '1.3.0' }
 export const DEFAULT_BASE_URL = 'https://shield.caelaralabs.com'
 export const USER_AGENT = 'CaelaraLabs-Engine/1.0'
 export const DEFAULT_TIMEOUT_MS = 3000
@@ -20,6 +20,7 @@ const ROUTE_PROPERTIES = {
   strictBlock: { type: 'boolean', description: 'Risk policy (default false). false: the route is risk-labelled (risk.riskLevel low|medium|high, risk.flags) and still quoted and built. true: a high-risk route (flagged high, or not screenable) is refused with 422 policy_blocked. Use true for treasury or unattended flows. Heuristic screening — will miss attacks.' },
   recipient: { type: 'string', description: 'Destination wallet. Required to build an EVM <-> Solana route (an address of the destination chain family).' },
   overrideRisk: { type: 'boolean', description: 'Deprecated: no effect. Routes are risk-labelled and built unless strictBlock is true.' },
+  venue: { type: 'string', enum: ['pumpfun'], description: 'Optional. "pumpfun": route native SOL <-> a Pump.fun coin through its bonding curve only (screened: reserves, completion, holder and creator concentration). Without it, coins still on their curve are raced against Jupiter automatically.' },
 }
 
 export const TOOLS = [
@@ -123,7 +124,7 @@ export const TOOLS = [
   {
     name: 'shield_universal_action',
     description:
-      'Pre-execution guardrail for any wallet action. Screens the action, then returns an UNSIGNED payload for the human user to review and sign (nothing is signed or submitted here). type: token_route (multi-chain token routes, 0.50% fee included), perp_order (Hyperliquid or GMX v2), prediction_order (Polymarket), nft_action (Zora mint or Seaport listing check), tx_guardrail (decode arbitrary EVM calldata: approvals, operators, transfers, unknown calls). Returns riskLevel, flags, feeModel and unsignedPayload. With strictBlock false (default) a high-risk action is still built: show riskLevel and flags to the user and get explicit confirmation before anything is signed. strictBlock true refuses riskLevel high (policy_blocked). Free, no key needed. Heuristic screening — will miss attacks.',
+      'Pre-execution guardrail for any wallet action. Screens the action, then returns an UNSIGNED payload for the human user to review and sign (nothing is signed or submitted here). type: token_route (multi-chain token routes including Pump.fun bonding-curve coins, 0.50% fee included), perp_order (Hyperliquid or GMX v2), prediction_order (Polymarket), nft_action (Zora mint or Seaport listing check), tx_guardrail (decode arbitrary EVM calldata: approvals, operators, transfers, unknown calls). Returns riskLevel, flags, feeModel and unsignedPayload. With strictBlock false (default) a high-risk action is still built: show riskLevel and flags to the user and get explicit confirmation before anything is signed. strictBlock true refuses riskLevel high (policy_blocked). Free, no key needed. Heuristic screening — will miss attacks.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -147,6 +148,7 @@ const KEYLESS_TOOLS = new Set(['shield_route_quote', 'shield_safe_swap', 'shield
 function buildRouteRequest(a, path, needTaker) {
   if (!CHAINS.includes(a.fromChain)) return { error: `fromChain must be one of ${CHAINS.join('|')}` }
   if (a.toChain !== undefined && !CHAINS.includes(a.toChain)) return { error: `toChain must be one of ${CHAINS.join('|')}` }
+  if (a.venue !== undefined && a.venue !== 'pumpfun') return { error: 'venue must be "pumpfun" or omitted' }
   for (const k of ['tokenIn', 'tokenOut']) {
     if (typeof a[k] !== 'string' || !a[k].trim()) return { error: `${k} (string: "native", an address or a Solana mint) is required` }
   }
@@ -155,6 +157,7 @@ function buildRouteRequest(a, path, needTaker) {
   }
   const body = { fromChain: a.fromChain, tokenIn: a.tokenIn.trim(), tokenOut: a.tokenOut.trim(), amount: a.amount }
   if (a.toChain !== undefined) body.toChain = a.toChain
+  if (a.venue === 'pumpfun') body.venue = 'pumpfun'
   if (a.slippageBps !== undefined) {
     if (!Number.isInteger(a.slippageBps) || a.slippageBps < 1 || a.slippageBps > 500) return { error: 'slippageBps must be an integer from 1 to 500' }
     body.slippageBps = a.slippageBps

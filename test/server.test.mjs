@@ -282,3 +282,12 @@ test('tool descriptions carry the disclosure and no swap framing on the new tool
   assert.ok(!/swap/i.test(t.description))
   assert.deepEqual(t.inputSchema.properties.type.enum, ['token_route', 'perp_order', 'prediction_order', 'nft_action', 'tx_guardrail'])
 })
+
+test('shield_route_quote forwards venue pumpfun and rejects other venues before any request', async () => {
+  const { handle, calls } = mockHandler(() => ({ body: { ok: true, provider: 'pumpfun' } }))
+  const res = await call(handle, 'shield_route_quote', { fromChain: 'solana', tokenIn: 'native', tokenOut: 'Mint1111111111111111111111111111111111pump', amount: '10000000', venue: 'pumpfun' })
+  assert.equal(res.isError, false)
+  assert.equal(JSON.parse(calls[0].init.body).venue, 'pumpfun')
+  const bad = await call(handle, 'shield_route_quote', { fromChain: 'solana', tokenIn: 'native', tokenOut: 'x', amount: '1', venue: 'raydium' })
+  assert.equal(bad.isError, true); assert.equal(calls.length, 1)
+})
