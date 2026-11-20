@@ -21,7 +21,20 @@ Input schemas for the four original tools match `https://shield.caelaralabs.com/
 
 ## Safe swap
 
-`shield_route_quote` returns an unsigned swap or bridge quote across solana, ethereum, base, arbitrum, optimism, polygon and bnb. The 0.50% integrator fee is included in the quote. `shield_safe_swap` screens both tokens, refuses high-risk or unscreened tokens unless `overrideRisk` is true, and returns unsigned transactions only. `taker` (the wallet address on `fromChain`) is required for `shield_safe_swap`.
+`shield_route_quote` returns an unsigned swap or bridge quote across solana, ethereum, base, arbitrum, optimism, polygon and bnb, including EVM <-> Solana in both directions. Several providers are quoted in parallel and the best net output is returned, with `selectedMidpoint` and `candidatesEvaluated`. The 0.50% integrator fee is included in the quote. `shield_safe_swap` builds unsigned transactions only. `taker` (the wallet address on `fromChain`) is required for `shield_safe_swap`, and `recipient` (the destination wallet) is required for EVM <-> Solana routes.
+
+| Corridor | Providers raced |
+|---|---|
+| Same-chain EVM swap | Velora, KyberSwap |
+| EVM to EVM bridge | Across, Relay |
+| EVM to Solana | deBridge DLN, Relay |
+| Solana to EVM | deBridge DLN |
+| Solana swap | Jupiter |
+
+Both tools return `risk.riskLevel` (`low`, `medium`, `high`), `risk.flags` and the disclosure. The `strictBlock` argument sets the risk policy:
+
+- `strictBlock: false` (default): the route is risk-labelled and still quoted and built. An agent should show a high risk level and its flags to the user and get explicit confirmation before anything is signed.
+- `strictBlock: true`: a high-risk route (flagged high, or a token that could not be screened) is refused with `policy_blocked` and nothing is built. Use it for treasury or unattended flows.
 
 Neither tool accepts a private key, seed or signer, and nothing here signs or holds keys. Your own wallet signs and submits the returned transactions. Both tools work without `CAELARA_KEY`.
 
@@ -35,12 +48,13 @@ Adapters for Coinbase AgentKit, elizaOS and the GOAT SDK are in `examples/`.
 
 ### Caveats
 
-- Token screening is heuristic. No findings is not proof of safety.
+- Heuristic screening — will miss attacks. No findings is not proof of safety.
 - Quotes can change and expire (see `expiresInSeconds`).
 - Execution is by your own wallet. Caelara never holds keys or funds.
 - Partner revenue sharing is not offered; requests with `partnerWallet` or `partnerBps` are rejected.
-- Solana-to-EVM bridging is not supported.
-- Polygon and BNB tokens are not screened, so builds on those chains need `overrideRisk: true`.
+- Polygon and BNB custom tokens are not screened, so they report `riskLevel: high` (refused when `strictBlock` is true).
+- `overrideRisk` is deprecated and has no effect; use `strictBlock`.
+- deBridge charges a flat protocol fee in the source chain's native token (shown in `warnings`), so small Solana to EVM transfers can cost more than they move.
 
 ## Configure
 

@@ -17,7 +17,7 @@ const routeShape = {
   tokenOut: z.string().describe('"native", a token address or a Solana mint'),
   amount: z.string().regex(/^[0-9]+$/).describe("Integer string, smallest units of tokenIn"),
   slippageBps: z.number().int().min(1).max(500).optional(),
-  overrideRisk: z.boolean().optional().describe("Let a high-risk or unscreened token through"),
+  strictBlock: z.boolean().optional().describe("Refuse high-risk routes with policy_blocked (default false: risk-labelled and still built)"),
 };
 
 class QuoteParameters extends createToolParameters(
@@ -59,7 +59,7 @@ export class ShieldRouteService {
   @Tool({
     name: "shield_safe_swap",
     description:
-      "Screen both tokens (heuristic) and build UNSIGNED swap or bridge transactions. Refuses high-risk or unscreened tokens unless overrideRisk is true. Never signs.",
+      "Screen both tokens (heuristic) and build UNSIGNED swap or bridge transactions. Returns risk.riskLevel and flags; with strictBlock true a high-risk route is refused (policy_blocked). Heuristic screening — will miss attacks. Never signs.",
   })
   async safeSwap(parameters: SafeSwapParameters) {
     return callRoute("/v1/route/build", parameters);

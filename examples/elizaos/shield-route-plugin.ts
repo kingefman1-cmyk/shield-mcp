@@ -75,7 +75,7 @@ export const shieldRouteQuote = make(
 export const shieldSafeSwap = make(
   "SHIELD_SAFE_SWAP",
   "/v1/route/build",
-  "Screen both tokens (heuristic) and build UNSIGNED swap or bridge transactions. Refuses high-risk or unscreened tokens unless overrideRisk is true. Requires taker. Never signs.",
+  "Screen both tokens (heuristic) and build UNSIGNED swap or bridge transactions. Returns risk.riskLevel and flags; with strictBlock true a high-risk route is refused (policy_blocked). Heuristic screening — will miss attacks. Requires taker. Never signs.",
   true,
 );
 

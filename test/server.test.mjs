@@ -232,3 +232,21 @@ test('no tool schema has a key, seed or signer field', () => {
   assert.ok(names.length > 10)
   for (const n of names) assert.doesNotMatch(n, /key|seed|mnemonic|private|signer/i, n)
 })
+
+test('route tools pass recipient and strictBlock, and keep risk and race fields in the result', async () => {
+  const body = { ok: true, provider: 'debridge', selectedMidpoint: 'debridge', layer: 4, candidatesEvaluated: [{ midpoint: 'debridge', ok: true }], risk: { riskLevel: 'high', flags: ['f'], disclosure: 'Heuristic screening — will miss attacks' }, policy: { strictBlock: false } }
+  const { handle, calls } = mockHandler(() => ({ body }))
+  const res = await call(handle, 'shield_route_quote', { ...ROUTE_ARGS, toChain: 'solana', recipient: ' SoLRecipient ', strictBlock: true })
+  assert.deepEqual(JSON.parse(calls[0].init.body), { ...ROUTE_ARGS, toChain: 'solana', recipient: 'SoLRecipient', strictBlock: true })
+  const out = JSON.parse(res.content[0].text)
+  assert.equal(out.selectedMidpoint, 'debridge'); assert.equal(out.layer, 4); assert.equal(out.candidatesEvaluated.length, 1)
+  assert.equal(out.risk.riskLevel, 'high'); assert.equal(out.risk.disclosure, 'Heuristic screening — will miss attacks'); assert.equal(out.policy.strictBlock, false)
+  const bad = await call(handle, 'shield_route_quote', { ...ROUTE_ARGS, strictBlock: 'yes' })
+  assert.equal(bad.isError, true)
+})
+
+test('a 422 policy_blocked keeps the risk telemetry', async () => {
+  const { handle } = mockHandler(() => ({ status: 422, body: { ok: false, error: 'policy_blocked', message: 'strictBlock is on', risk: { riskLevel: 'high', flags: ['x'] } } }))
+  const p = JSON.parse((await call(handle, 'shield_safe_swap', { ...ROUTE_ARGS, taker: '0xt', strictBlock: true })).content[0].text)
+  assert.equal(p.error, 'policy_blocked'); assert.equal(p.risk.riskLevel, 'high')
+})

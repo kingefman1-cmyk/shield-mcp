@@ -19,7 +19,7 @@ const RouteSchema = z.object({
   amount: z.string().regex(/^[0-9]+$/).describe("Integer string, smallest units of tokenIn"),
   slippageBps: z.number().int().min(1).max(500).optional(),
   taker: z.string().optional().describe("Wallet address on fromChain (required for builds)"),
-  overrideRisk: z.boolean().optional().describe("Let a high-risk or unscreened token through (default false)"),
+  strictBlock: z.boolean().optional().describe("Refuse high-risk routes with policy_blocked (default false: risk-labelled and still built)"),
 });
 
 const SafeSwapSchema = RouteSchema.extend({
@@ -62,7 +62,7 @@ export class ShieldRouteActionProvider extends ActionProvider<WalletProvider> {
   @CreateAction({
     name: "shield_safe_swap",
     description:
-      "Screen both tokens (heuristic) and build UNSIGNED swap or bridge transactions. Refuses high-risk or unscreened tokens unless overrideRisk is true. The caller signs with its own wallet.",
+      "Screen both tokens (heuristic) and build UNSIGNED swap or bridge transactions. Returns risk.riskLevel and flags; with strictBlock true a high-risk route is refused (policy_blocked). Heuristic screening — will miss attacks. The caller signs with its own wallet.",
     schema: SafeSwapSchema,
   })
   async safeSwap(_wallet: WalletProvider, args: z.infer<typeof SafeSwapSchema>): Promise<string> {
