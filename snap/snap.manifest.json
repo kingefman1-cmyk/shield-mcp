@@ -1,0 +1,33 @@
+{
+  "version": "0.1.0",
+  "description": "Transaction insights: decodes approvals, transfers and router calls locally, with optional remote token and destination screening via the Caelara Shield API. Heuristic screening — will miss attacks.",
+  "proposedName": "Caelara Shield",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kingefman1-cmyk/shield-mcp.git"
+  },
+  "source": {
+    "shasum": "ciFpK9uulTBuek6GA80zKRH+9sdpIsp14EIiPA8zWes=",
+    "location": {
+      "npm": {
+        "filePath": "dist/bundle.js",
+        "iconPath": "images/icon.svg",
+        "packageName": "@caelaralabs/shield-snap",
+        "registry": "https://registry.npmjs.org/"
+      }
+    }
+  },
+  "initialPermissions": {
+    "endowment:transaction-insight": {
+      "allowTransactionOrigin": true
+    },
+    "endowment:network-access": {},
+    "endowment:rpc": {
+      "dapps": true,
+      "snaps": false
+    },
+    "snap_manageState": {}
+  },
+  "platformVersion": "12.1.0",
+  "manifestVersion": "0.1"
+}

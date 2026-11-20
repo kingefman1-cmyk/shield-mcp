@@ -97,3 +97,7 @@ The tests start a local fake HTTP server and exercise initialize, tools/list and
 ## License
 
 MIT. Caelara Labs, ops@caelaralabs.com.
+
+## MetaMask snap
+
+The Caelara Shield MetaMask snap (`npm:@caelaralabs/shield-snap`) is in [`snap/`](snap/). It adds a risk panel to MetaMask transaction confirmations on Ethereum, Base, Arbitrum, Optimism, Polygon and BNB Chain, and exposes screened route quotes to websites. Heuristic screening — will miss attacks. See [snap/README.md](snap/README.md).
