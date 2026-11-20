@@ -77,7 +77,7 @@ test('initialize, notification and tools/list', async () => {
   assert.equal(r[1].result.serverInfo.name, 'caelara-shield')
   assert.deepEqual(
     r[2].result.tools.map((t) => t.name),
-    ['shield_scan_prompt', 'shield_validate_output', 'shield_proxy_fetch', 'shield_audit_token', 'shield_route_quote', 'shield_safe_swap'],
+    ['shield_scan_prompt', 'shield_validate_output', 'shield_proxy_fetch', 'shield_audit_token', 'shield_route_quote', 'shield_safe_swap', 'shield_universal_action'],
   )
   assert.equal(r[3].error.code, -32601)
 })
@@ -165,8 +165,8 @@ function mockHandler(respond, env = {}) {
 const call = (handle, name, args) =>
   handle({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } }).then((r) => r.result)
 
-test('tools/list exposes six tools', () => {
-  assert.equal(TOOLS.length, 6)
+test('tools/list exposes seven tools', () => {
+  assert.equal(TOOLS.length, 7)
 })
 
 test('shield_route_quote builds the right request without a key', async () => {
@@ -249,4 +249,36 @@ test('a 422 policy_blocked keeps the risk telemetry', async () => {
   const { handle } = mockHandler(() => ({ status: 422, body: { ok: false, error: 'policy_blocked', message: 'strictBlock is on', risk: { riskLevel: 'high', flags: ['x'] } } }))
   const p = JSON.parse((await call(handle, 'shield_safe_swap', { ...ROUTE_ARGS, taker: '0xt', strictBlock: true })).content[0].text)
   assert.equal(p.error, 'policy_blocked'); assert.equal(p.risk.riskLevel, 'high')
+})
+
+test('shield_universal_action posts type, params and strictBlock to the universal endpoint, keyless, and passes the result through', async () => {
+  const body = { ok: true, type: 'tx_guardrail', venue: 'evm', riskLevel: 'high', flags: ['approval:unlimited: x'], disclosure: 'Heuristic screening — will miss attacks', feeModel: { kind: 'none' }, unsignedPayload: { kind: 'evm_transaction' } }
+  const { handle, calls } = mockHandler(() => ({ body }))
+  const args = { type: 'tx_guardrail', strictBlock: false, params: { chainId: 8453, to: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913', data: '0x' } }
+  const res = await call(handle, 'shield_universal_action', args)
+  assert.equal(res.isError, false)
+  assert.equal(calls[0].url, 'https://example.test/v1/universal/screen-build')
+  assert.deepEqual(JSON.parse(calls[0].init.body), args)
+  assert.equal(calls[0].init.headers['X-Caelara-Key'], undefined)
+  assert.deepEqual(JSON.parse(res.content[0].text), body)
+})
+
+test('shield_universal_action: policy_blocked is an error result; bad arguments never reach the network', async () => {
+  const { handle, calls } = mockHandler(() => ({ status: 422, body: { ok: false, error: 'policy_blocked', message: 'strictBlock is on', riskLevel: 'high' } }))
+  const res = await call(handle, 'shield_universal_action', { type: 'perp_order', strictBlock: true, params: { venue: 'hyperliquid' } })
+  assert.equal(res.isError, true)
+  assert.equal(JSON.parse(res.content[0].text).error, 'policy_blocked')
+  const before = calls.length
+  for (const bad of [{ type: 'bogus', params: {} }, { type: 'nft_action' }, { type: 'nft_action', params: {}, strictBlock: 'yes' }]) {
+    const r = await call(handle, 'shield_universal_action', bad)
+    assert.equal(r.isError, true)
+  }
+  assert.equal(calls.length, before)
+})
+
+test('tool descriptions carry the disclosure and no swap framing on the new tool', () => {
+  const t = TOOLS.find((x) => x.name === 'shield_universal_action')
+  assert.match(t.description, /Heuristic screening — will miss attacks/)
+  assert.ok(!/swap/i.test(t.description))
+  assert.deepEqual(t.inputSchema.properties.type.enum, ['token_route', 'perp_order', 'prediction_order', 'nft_action', 'tx_guardrail'])
 })

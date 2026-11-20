@@ -1,7 +1,7 @@
 // Caelara Shield MCP server: newline-delimited JSON-RPC 2.0 over stdio.
 // Stateless. Request and response bodies are never logged or stored.
 
-export const SERVER_INFO = { name: 'caelara-shield', version: '1.1.1' }
+export const SERVER_INFO = { name: 'caelara-shield', version: '1.2.0' }
 export const DEFAULT_BASE_URL = 'https://shield.caelaralabs.com'
 export const USER_AGENT = 'CaelaraLabs-Engine/1.0'
 export const DEFAULT_TIMEOUT_MS = 3000
@@ -97,7 +97,7 @@ export const TOOLS = [
   {
     name: 'shield_route_quote',
     description:
-      'Get an UNSIGNED swap or bridge quote across solana, ethereum, base, arbitrum, optimism, polygon and bnb, including EVM <-> Solana. Several providers are quoted in parallel and the best net output is returned (selectedMidpoint, candidatesEvaluated). Unsigned quote only: nothing is signed or submitted. The 0.50% integrator fee is included in the quote. Returns risk.riskLevel and risk.flags. Heuristic screening — will miss attacks. Free, no key needed.',
+      'Screen and quote a token route (same-chain or cross-chain) across solana, ethereum, base, arbitrum, optimism, polygon and bnb, including EVM <-> Solana. Several providers are quoted in parallel and the best net output is returned (selectedMidpoint, candidatesEvaluated). Unsigned quote only: nothing is signed or submitted. The 0.50% integrator fee is included in the quote. Returns risk.riskLevel and risk.flags. Heuristic screening — will miss attacks. Free, no key needed.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -110,7 +110,7 @@ export const TOOLS = [
   {
     name: 'shield_safe_swap',
     description:
-      'Build a screened swap or bridge, including EVM <-> Solana (pass recipient). Both tokens are screened and the result carries risk.riskLevel and risk.flags. With strictBlock false (default) a high-risk route is still built: show the risk and flags to the human user and get explicit confirmation before anything is signed. With strictBlock true a high-risk route is refused (422 policy_blocked). Returns UNSIGNED transactions only and never signs or holds keys; the caller signs with their own wallet. 0.50% integrator fee is included in the quote. Heuristic screening — will miss attacks. Free, no key needed.',
+      'Screen a token route, then build its UNSIGNED transactions, including EVM <-> Solana (pass recipient). Both tokens are screened and the result carries risk.riskLevel and risk.flags. With strictBlock false (default) a high-risk route is still built: show the risk and flags to the human user and get explicit confirmation before anything is signed. With strictBlock true a high-risk route is refused (422 policy_blocked). Returns UNSIGNED transactions only and never signs or holds keys; the caller signs with their own wallet. 0.50% integrator fee is included in the quote. Heuristic screening — will miss attacks. Free, no key needed.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -120,12 +120,29 @@ export const TOOLS = [
       required: ['fromChain', 'tokenIn', 'tokenOut', 'amount', 'taker'],
     },
   },
+  {
+    name: 'shield_universal_action',
+    description:
+      'Pre-execution guardrail for any wallet action. Screens the action, then returns an UNSIGNED payload for the human user to review and sign (nothing is signed or submitted here). type: token_route (multi-chain token routes, 0.50% fee included), perp_order (Hyperliquid or GMX v2), prediction_order (Polymarket), nft_action (Zora mint or Seaport listing check), tx_guardrail (decode arbitrary EVM calldata: approvals, operators, transfers, unknown calls). Returns riskLevel, flags, feeModel and unsignedPayload. With strictBlock false (default) a high-risk action is still built: show riskLevel and flags to the user and get explicit confirmation before anything is signed. strictBlock true refuses riskLevel high (policy_blocked). Free, no key needed. Heuristic screening — will miss attacks.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        type: { type: 'string', enum: ['token_route', 'perp_order', 'prediction_order', 'nft_action', 'tx_guardrail'] },
+        strictBlock: { type: 'boolean', description: 'Risk policy (default false). true: riskLevel high is refused with policy_blocked and nothing is built.' },
+        params: {
+          type: 'object',
+          description: 'token_route: {fromChain, toChain?, tokenIn, tokenOut, amount, slippageBps?, taker? (to build), recipient?}. perp_order: {venue: "hyperliquid"|"gmx", ...}. prediction_order: {venue: "polymarket", ...}. nft_action: {venue: "zora"|"seaport", ...}. tx_guardrail: {chainId, to, data, value?, from?}. Field lists: https://shield.caelaralabs.com/openapi.json',
+        },
+      },
+      required: ['type', 'params'],
+    },
+  },
 ]
 
 const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v)
 
 // Tools that work without a key. The key header is only sent on them if already set.
-const KEYLESS_TOOLS = new Set(['shield_route_quote', 'shield_safe_swap'])
+const KEYLESS_TOOLS = new Set(['shield_route_quote', 'shield_safe_swap', 'shield_universal_action'])
 
 function buildRouteRequest(a, path, needTaker) {
   if (!CHAINS.includes(a.fromChain)) return { error: `fromChain must be one of ${CHAINS.join('|')}` }
@@ -220,6 +237,15 @@ export function buildRequest(name, args) {
       return buildRouteRequest(a, '/v1/route/quote', false)
     case 'shield_safe_swap':
       return buildRouteRequest(a, '/v1/route/build', true)
+    case 'shield_universal_action': {
+      const types = ['token_route', 'perp_order', 'prediction_order', 'nft_action', 'tx_guardrail']
+      if (!types.includes(a.type)) return { error: `type must be one of ${types.join('|')}` }
+      if (!isObj(a.params)) return { error: 'params (object) is required' }
+      if (a.strictBlock !== undefined && typeof a.strictBlock !== 'boolean') return { error: 'strictBlock must be a boolean' }
+      const body = { type: a.type, params: a.params }
+      if (a.strictBlock !== undefined) body.strictBlock = a.strictBlock
+      return { method: 'POST', path: '/v1/universal/screen-build', body }
+    }
     default:
       return { error: `unknown tool: ${name}` }
   }
@@ -262,7 +288,7 @@ export function createHandler(opts = {}) {
           return toolResult({ error: String(parsed.error ?? 'upstream_error'), message: String(parsed.message ?? ''), status: res.status, ...(isObj(parsed.risk) ? { risk: parsed.risk } : {}) }, true)
         }
         if (!res.ok) return toolResult({ error: 'upstream_error', status: res.status, details: parsed }, true)
-        return toolResult(trimRouteResponse(parsed, name === 'shield_safe_swap'), false)
+        return toolResult(name === 'shield_universal_action' ? parsed : trimRouteResponse(parsed, name === 'shield_safe_swap'), false)
       }
       if (res.status === 402) {
         return toolResult(
