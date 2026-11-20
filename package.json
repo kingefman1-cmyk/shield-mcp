@@ -1,6 +1,6 @@
 {
   "name": "@caelaralabs/shield-mcp",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "mcpName": "com.caelaralabs/shield",
   "description": "Stdio MCP server for Caelara Shield: prompt screening, output validation, SSRF-guarded fetch and token/transaction screening. Stateless, zero runtime dependencies.",
   "type": "module",
@@ -11,6 +11,7 @@
   "files": [
     "bin",
     "src",
+    "examples",
     "README.md"
   ],
   "scripts": {

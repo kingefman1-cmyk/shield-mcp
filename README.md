@@ -1,6 +1,8 @@
 # @caelaralabs/shield-mcp
 
-A stdio [Model Context Protocol](https://modelcontextprotocol.io) server for Caelara Shield. It exposes four tools that call `https://shield.caelaralabs.com/v1/...`. Plain Node ESM, no runtime dependencies, Node 18 or newer.
+A stdio [Model Context Protocol](https://modelcontextprotocol.io) server for Caelara Shield. It exposes six tools that call `https://shield.caelaralabs.com/v1/...`. Plain Node ESM, no runtime dependencies, Node 18 or newer.
+
+Install line: `npx -y @caelaralabs/shield-mcp`
 
 Shield results are heuristic checks, not guarantees.
 
@@ -8,16 +10,41 @@ Shield results are heuristic checks, not guarantees.
 
 | Tool | Route | Price per call |
 |---|---|---|
+| `shield_route_quote` | `POST /v1/route/quote` | free, no key |
+| `shield_safe_swap` | `POST /v1/route/build` | free, no key |
 | `shield_scan_prompt` | `POST /v1/shield/prompt` | 0.015 USDC |
 | `shield_validate_output` | `POST /v1/shield/output` | 0.015 USDC |
 | `shield_proxy_fetch` | `GET /v1/proxy/_?url=...` | 0.025 USDC |
 | `shield_audit_token` | `POST /v1/shield/tx` | 0.050 USDC |
 
-Input schemas match `https://shield.caelaralabs.com/mcp.json`.
+Input schemas for the four original tools match `https://shield.caelaralabs.com/mcp.json`.
+
+## Safe swap
+
+`shield_route_quote` returns an unsigned swap or bridge quote across solana, ethereum, base, arbitrum, optimism, polygon and bnb. The 0.50% integrator fee is included in the quote. `shield_safe_swap` screens both tokens, refuses high-risk or unscreened tokens unless `overrideRisk` is true, and returns unsigned transactions only. `taker` (the wallet address on `fromChain`) is required for `shield_safe_swap`.
+
+Neither tool accepts a private key, seed or signer, and nothing here signs or holds keys. Your own wallet signs and submits the returned transactions. Both tools work without `CAELARA_KEY`.
+
+Example arguments (Base, 10 USDC to native ETH; `amount` is in the smallest units of `tokenIn`):
+
+```json
+{ "fromChain": "base", "tokenIn": "<USDC address>", "tokenOut": "native", "amount": "10000000", "taker": "<your wallet>" }
+```
+
+Adapters for Coinbase AgentKit, elizaOS and the GOAT SDK are in `examples/`.
+
+### Caveats
+
+- Token screening is heuristic. No findings is not proof of safety.
+- Quotes can change and expire (see `expiresInSeconds`).
+- Execution is by your own wallet. Caelara never holds keys or funds.
+- Partner revenue sharing is not offered; requests with `partnerWallet` or `partnerBps` are rejected.
+- Solana-to-EVM bridging is not supported.
+- Polygon and BNB tokens are not screened, so builds on those chains need `overrideRisk: true`.
 
 ## Configure
 
-Set `CAELARA_KEY` to your Caelara API key. It is sent as the `X-Caelara-Key` header. The key is read from the environment only.
+The four original tools need a Caelara API key: set `CAELARA_KEY`. It is sent as the `X-Caelara-Key` header. The key is read from the environment only. The two route tools do not require it.
 
 Example MCP client configuration:
 

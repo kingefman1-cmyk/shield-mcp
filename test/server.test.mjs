@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import http from 'node:http'
 import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
+import { createHandler, TOOLS } from '../src/index.mjs'
 
 const BIN = fileURLToPath(new URL('../bin/shield-mcp.mjs', import.meta.url))
 
@@ -76,7 +77,7 @@ test('initialize, notification and tools/list', async () => {
   assert.equal(r[1].result.serverInfo.name, 'caelara-shield')
   assert.deepEqual(
     r[2].result.tools.map((t) => t.name),
-    ['shield_scan_prompt', 'shield_validate_output', 'shield_proxy_fetch', 'shield_audit_token'],
+    ['shield_scan_prompt', 'shield_validate_output', 'shield_proxy_fetch', 'shield_audit_token', 'shield_route_quote', 'shield_safe_swap'],
   )
   assert.equal(r[3].error.code, -32601)
 })
@@ -141,4 +142,93 @@ test('unreachable host returns network_error result', async () => {
   ])
   assert.equal(r[1].result.isError, true)
   assert.equal(JSON.parse(r[1].result.content[0].text).error, 'network_error')
+})
+
+// ---- router tools, against a mock fetch ----
+const ROUTE_ARGS = { fromChain: 'base', tokenIn: 'native', tokenOut: '0xabc', amount: '10000000' }
+
+function mockHandler(respond, env = {}) {
+  const calls = []
+  const fetch = async (url, init) => {
+    calls.push({ url, init })
+    const r = respond(url, init)
+    return {
+      status: r.status ?? 200,
+      ok: (r.status ?? 200) < 400,
+      headers: { get: () => null },
+      text: async () => JSON.stringify(r.body),
+    }
+  }
+  return { handle: createHandler({ env, fetch, baseUrl: 'https://example.test' }), calls }
+}
+
+const call = (handle, name, args) =>
+  handle({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } }).then((r) => r.result)
+
+test('tools/list exposes six tools', () => {
+  assert.equal(TOOLS.length, 6)
+})
+
+test('shield_route_quote builds the right request without a key', async () => {
+  const { handle, calls } = mockHandler(() => ({ body: { ok: true, provider: 'velora', kind: 'swap', extra: 'dropped', fee: { bps: 50 } } }))
+  const res = await call(handle, 'shield_route_quote', { ...ROUTE_ARGS, slippageBps: 100, overrideRisk: false })
+  assert.equal(res.isError, false)
+  assert.equal(calls[0].url, 'https://example.test/v1/route/quote')
+  assert.equal(calls[0].init.method, 'POST')
+  assert.deepEqual(JSON.parse(calls[0].init.body), { ...ROUTE_ARGS, slippageBps: 100, overrideRisk: false })
+  assert.equal(calls[0].init.headers['X-Caelara-Key'], undefined)
+  const out = JSON.parse(res.content[0].text)
+  assert.equal(out.provider, 'velora')
+  assert.equal(out.extra, undefined)
+  assert.equal(out.transactions, undefined)
+})
+
+test('shield_safe_swap posts to build, keeps transactions, key header only if set', async () => {
+  const body = { ok: true, provider: 'velora', transactions: [{ type: 'swap', chainId: 8453, to: '0x1', data: '0x', value: '0' }], execution: 'Unsigned.' }
+  const a = mockHandler(() => ({ body }))
+  const res = await call(a.handle, 'shield_safe_swap', { ...ROUTE_ARGS, taker: '0xtaker' })
+  assert.equal(a.calls[0].url, 'https://example.test/v1/route/build')
+  assert.equal(JSON.parse(a.calls[0].init.body).taker, '0xtaker')
+  assert.equal(a.calls[0].init.headers['X-Caelara-Key'], undefined)
+  assert.equal(JSON.parse(res.content[0].text).transactions.length, 1)
+  const b = mockHandler(() => ({ body }), { CAELARA_KEY: 'k' })
+  await call(b.handle, 'shield_safe_swap', { ...ROUTE_ARGS, taker: '0xtaker' })
+  assert.equal(b.calls[0].init.headers['X-Caelara-Key'], 'k')
+})
+
+test('route API errors pass through code and message', async () => {
+  const { handle } = mockHandler(() => ({ status: 422, body: { ok: false, error: 'blocked_by_screening', message: 'token flagged' } }))
+  const res = await call(handle, 'shield_safe_swap', { ...ROUTE_ARGS, taker: '0xt' })
+  assert.equal(res.isError, true)
+  const p = JSON.parse(res.content[0].text)
+  assert.equal(p.error, 'blocked_by_screening')
+  assert.equal(p.message, 'token flagged')
+})
+
+test('route tools validate input without calling upstream', async () => {
+  const { handle, calls } = mockHandler(() => ({ body: { ok: true } }))
+  const bad = [
+    ['shield_route_quote', { ...ROUTE_ARGS, fromChain: 'dogechain' }],
+    ['shield_route_quote', { ...ROUTE_ARGS, toChain: 'nope' }],
+    ['shield_safe_swap', ROUTE_ARGS],
+    ['shield_route_quote', { ...ROUTE_ARGS, amount: '1.5' }],
+    ['shield_route_quote', { ...ROUTE_ARGS, amount: 100 }],
+    ['shield_route_quote', { ...ROUTE_ARGS, slippageBps: 900 }],
+  ]
+  for (const [name, args] of bad) {
+    const res = await call(handle, name, args)
+    assert.equal(res.isError, true, JSON.stringify(args))
+    assert.equal(JSON.parse(res.content[0].text).error, 'invalid_arguments')
+  }
+  assert.equal(calls.length, 0)
+})
+
+test('no tool schema has a key, seed or signer field', () => {
+  const names = []
+  const walk = (o) => {
+    if (o && typeof o === 'object') for (const [k, v] of Object.entries(o)) { if (k === 'properties') names.push(...Object.keys(v)); walk(v) }
+  }
+  for (const t of TOOLS) walk(t.inputSchema)
+  assert.ok(names.length > 10)
+  for (const n of names) assert.doesNotMatch(n, /key|seed|mnemonic|private|signer/i, n)
 })
