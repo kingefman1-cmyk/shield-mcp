@@ -1,29 +1,32 @@
 // Caelara Shield MCP server: newline-delimited JSON-RPC 2.0 over stdio.
 // Stateless. Request and response bodies are never logged or stored.
+// Five paid screening tools, preflight first (optional: it runs only when the agent calls it). The router and order-builder tools (shield_route_quote, shield_safe_swap, shield_universal_action)
+// were retired on 2026-11-22: Caelara Shield screens and builds nothing for a wallet to sign.
 
-export const SERVER_INFO = { name: 'caelara-shield', version: '1.3.0' }
+import { createKeyResolver, REFILL } from './fuel.mjs'
+
+export const SERVER_INFO = { name: 'caelara-shield', version: '1.6.0' }
+const CLEARANCE = /^[0-9a-f]{64}$/
 export const DEFAULT_BASE_URL = 'https://shield.caelaralabs.com'
 export const USER_AGENT = 'CaelaraLabs-Engine/1.0'
 export const DEFAULT_TIMEOUT_MS = 3000
 const SUPPORTED_PROTOCOLS = ['2025-06-18', '2025-03-26', '2024-11-05']
 const MAX_RESULT_CHARS = 400000
 
-export const CHAINS = ['solana', 'ethereum', 'base', 'arbitrum', 'optimism', 'polygon', 'bnb']
-
-const ROUTE_PROPERTIES = {
-  fromChain: { type: 'string', enum: CHAINS, description: 'Source chain' },
-  toChain: { type: 'string', enum: CHAINS, description: 'Destination chain (default fromChain; a different value means a bridge; EVM <-> Solana is supported in both directions)' },
-  tokenIn: { type: 'string', description: '"native" or the token address / Solana mint being sold' },
-  tokenOut: { type: 'string', description: '"native" or the token address / Solana mint being bought' },
-  amount: { type: 'string', description: 'Integer string, smallest units of tokenIn' },
-  slippageBps: { type: 'integer', minimum: 1, maximum: 500, description: 'Slippage tolerance in basis points (default 50)' },
-  strictBlock: { type: 'boolean', description: 'Risk policy (default false). false: the route is risk-labelled (risk.riskLevel low|medium|high, risk.flags) and still quoted and built. true: a high-risk route (flagged high, or not screenable) is refused with 422 policy_blocked. Use true for treasury or unattended flows. Heuristic screening — will miss attacks.' },
-  recipient: { type: 'string', description: 'Destination wallet. Required to build an EVM <-> Solana route (an address of the destination chain family).' },
-  overrideRisk: { type: 'boolean', description: 'Deprecated: no effect. Routes are risk-labelled and built unless strictBlock is true.' },
-  venue: { type: 'string', enum: ['pumpfun'], description: 'Optional. "pumpfun": route native SOL <-> a Pump.fun coin through its bonding curve only (screened: reserves, completion, holder and creator concentration). Without it, coins still on their curve are raced against Jupiter automatically.' },
-}
-
 export const TOOLS = [
+  {
+    name: 'shield_preflight',
+    description:
+      'Optional boot clearance: screen your system prompt and tool descriptions once at start-up for injection, tool poisoning and embedded secrets. Returns a clearance_id (a verifiable SHA-256 receipt) that this server then sends with your later Shield calls (0.005 USDC per call)',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        system_prompt: { type: 'string', description: 'Your system prompt or instructions (max 200000 characters)' },
+        tools: { type: 'array', description: 'Tool names or { name, description } objects you will load (max 64)', items: {} },
+        agent: { type: 'string', description: 'A label for this agent (max 100 characters)' },
+      },
+    },
+  },
   {
     name: 'shield_scan_prompt',
     description:
@@ -95,109 +98,9 @@ export const TOOLS = [
       required: [],
     },
   },
-  {
-    name: 'shield_route_quote',
-    description:
-      'Screen and quote a token route (same-chain or cross-chain) across solana, ethereum, base, arbitrum, optimism, polygon and bnb, including EVM <-> Solana. Several providers are quoted in parallel and the best net output is returned (selectedMidpoint, candidatesEvaluated). Unsigned quote only: nothing is signed or submitted. The 0.50% integrator fee is included in the quote. Returns risk.riskLevel and risk.flags. Heuristic screening — will miss attacks. Free, no key needed.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        ...ROUTE_PROPERTIES,
-        taker: { type: 'string', description: 'Optional wallet address on fromChain' },
-      },
-      required: ['fromChain', 'tokenIn', 'tokenOut', 'amount'],
-    },
-  },
-  {
-    name: 'shield_safe_swap',
-    description:
-      'Screen a token route, then build its UNSIGNED transactions, including EVM <-> Solana (pass recipient). Both tokens are screened and the result carries risk.riskLevel and risk.flags. With strictBlock false (default) a high-risk route is still built: show the risk and flags to the human user and get explicit confirmation before anything is signed. With strictBlock true a high-risk route is refused (422 policy_blocked). Returns UNSIGNED transactions only and never signs or holds keys; the caller signs with their own wallet. 0.50% integrator fee is included in the quote. Heuristic screening — will miss attacks. Free, no key needed.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        ...ROUTE_PROPERTIES,
-        taker: { type: 'string', description: 'Wallet address on fromChain that will sign and submit the transactions (required)' },
-      },
-      required: ['fromChain', 'tokenIn', 'tokenOut', 'amount', 'taker'],
-    },
-  },
-  {
-    name: 'shield_universal_action',
-    description:
-      'Pre-execution guardrail for any wallet action. Screens the action, then returns an UNSIGNED payload for the human user to review and sign (nothing is signed or submitted here). type: token_route (multi-chain token routes including Pump.fun bonding-curve coins, 0.50% fee included), perp_order (Hyperliquid or GMX v2), prediction_order (Polymarket), nft_action (Zora mint or Seaport listing check), tx_guardrail (decode arbitrary EVM calldata: approvals, operators, transfers, unknown calls). Returns riskLevel, flags, feeModel and unsignedPayload. With strictBlock false (default) a high-risk action is still built: show riskLevel and flags to the user and get explicit confirmation before anything is signed. strictBlock true refuses riskLevel high (policy_blocked). Free, no key needed. Heuristic screening — will miss attacks.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        type: { type: 'string', enum: ['token_route', 'perp_order', 'prediction_order', 'nft_action', 'tx_guardrail'] },
-        strictBlock: { type: 'boolean', description: 'Risk policy (default false). true: riskLevel high is refused with policy_blocked and nothing is built.' },
-        params: {
-          type: 'object',
-          description: 'token_route: {fromChain, toChain?, tokenIn, tokenOut, amount, slippageBps?, taker? (to build), recipient?}. perp_order: {venue: "hyperliquid"|"gmx", ...}. prediction_order: {venue: "polymarket", ...}. nft_action: {venue: "zora"|"seaport", ...}. tx_guardrail: {chainId, to, data, value?, from?}. Field lists: https://shield.caelaralabs.com/openapi.json',
-        },
-      },
-      required: ['type', 'params'],
-    },
-  },
 ]
 
 const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v)
-
-// Tools that work without a key. The key header is only sent on them if already set.
-const KEYLESS_TOOLS = new Set(['shield_route_quote', 'shield_safe_swap', 'shield_universal_action'])
-
-function buildRouteRequest(a, path, needTaker) {
-  if (!CHAINS.includes(a.fromChain)) return { error: `fromChain must be one of ${CHAINS.join('|')}` }
-  if (a.toChain !== undefined && !CHAINS.includes(a.toChain)) return { error: `toChain must be one of ${CHAINS.join('|')}` }
-  if (a.venue !== undefined && a.venue !== 'pumpfun') return { error: 'venue must be "pumpfun" or omitted' }
-  for (const k of ['tokenIn', 'tokenOut']) {
-    if (typeof a[k] !== 'string' || !a[k].trim()) return { error: `${k} (string: "native", an address or a Solana mint) is required` }
-  }
-  if (typeof a.amount !== 'string' || !/^[0-9]+$/.test(a.amount) || /^0+$/.test(a.amount)) {
-    return { error: 'amount must be a positive integer string in the smallest units of tokenIn' }
-  }
-  const body = { fromChain: a.fromChain, tokenIn: a.tokenIn.trim(), tokenOut: a.tokenOut.trim(), amount: a.amount }
-  if (a.toChain !== undefined) body.toChain = a.toChain
-  if (a.venue === 'pumpfun') body.venue = 'pumpfun'
-  if (a.slippageBps !== undefined) {
-    if (!Number.isInteger(a.slippageBps) || a.slippageBps < 1 || a.slippageBps > 500) return { error: 'slippageBps must be an integer from 1 to 500' }
-    body.slippageBps = a.slippageBps
-  }
-  if (a.taker !== undefined && a.taker !== null && a.taker !== '') {
-    if (typeof a.taker !== 'string') return { error: 'taker must be a wallet address string' }
-    body.taker = a.taker.trim()
-  }
-  if (needTaker && !body.taker) return { error: 'taker (wallet address on fromChain) is required' }
-  if (a.recipient !== undefined && a.recipient !== null && a.recipient !== '') {
-    if (typeof a.recipient !== 'string') return { error: 'recipient must be a wallet address string' }
-    body.recipient = a.recipient.trim()
-  }
-  if (a.strictBlock !== undefined) {
-    if (typeof a.strictBlock !== 'boolean') return { error: 'strictBlock must be a boolean' }
-    body.strictBlock = a.strictBlock
-  }
-  if (a.overrideRisk !== undefined) {
-    if (typeof a.overrideRisk !== 'boolean') return { error: 'overrideRisk must be a boolean' }
-    body.overrideRisk = a.overrideRisk
-  }
-  return { method: 'POST', path, body }
-}
-
-// Trim a route API response to the contract fields.
-const QUOTE_FIELDS = [
-  'ok', 'provider', 'kind', 'fromChain', 'toChain', 'tokenIn', 'tokenOut', 'amountIn', 'estimatedAmountOut',
-  'minAmountOut', 'fee', 'screening', 'blocked', 'blockedReason', 'warnings', 'expiresInSeconds',
-  'selectedMidpoint', 'layer', 'candidatesEvaluated', 'risk', 'policy',
-]
-export function trimRouteResponse(p, withTransactions) {
-  if (!isObj(p)) return p
-  const out = {}
-  for (const k of QUOTE_FIELDS) if (k in p) out[k] = p[k]
-  if (withTransactions) {
-    if ('transactions' in p) out.transactions = p.transactions
-    if ('execution' in p) out.execution = p.execution
-  }
-  return out
-}
 
 const toolResult = (payload, isError = false) => ({
   content: [{ type: 'text', text: typeof payload === 'string' ? payload : JSON.stringify(payload) }],
@@ -208,6 +111,14 @@ const toolResult = (payload, isError = false) => ({
 export function buildRequest(name, args) {
   const a = isObj(args) ? args : {}
   switch (name) {
+    case 'shield_preflight': {
+      const body = {}
+      if (typeof a.system_prompt === 'string') body.system_prompt = a.system_prompt
+      if (Array.isArray(a.tools)) body.tools = a.tools
+      if (typeof a.agent === 'string') body.agent = a.agent
+      if (!body.system_prompt && !body.tools) return { error: 'system_prompt, tools or both are required' }
+      return { method: 'POST', path: '/v1/shield/preflight', body }
+    }
     case 'shield_scan_prompt': {
       if (typeof a.text !== 'string') return { error: 'text (string) is required' }
       const body = { text: a.text }
@@ -236,19 +147,6 @@ export function buildRequest(name, args) {
       if (!body.token && !body.hash && !body.destination) return { error: 'provide at least one of token, hash or destination' }
       return { method: 'POST', path: '/v1/shield/tx', body }
     }
-    case 'shield_route_quote':
-      return buildRouteRequest(a, '/v1/route/quote', false)
-    case 'shield_safe_swap':
-      return buildRouteRequest(a, '/v1/route/build', true)
-    case 'shield_universal_action': {
-      const types = ['token_route', 'perp_order', 'prediction_order', 'nft_action', 'tx_guardrail']
-      if (!types.includes(a.type)) return { error: `type must be one of ${types.join('|')}` }
-      if (!isObj(a.params)) return { error: 'params (object) is required' }
-      if (a.strictBlock !== undefined && typeof a.strictBlock !== 'boolean') return { error: 'strictBlock must be a boolean' }
-      const body = { type: a.type, params: a.params }
-      if (a.strictBlock !== undefined) body.strictBlock = a.strictBlock
-      return { method: 'POST', path: '/v1/universal/screen-build', body }
-    }
     default:
       return { error: `unknown tool: ${name}` }
   }
@@ -259,14 +157,27 @@ export function createHandler(opts = {}) {
   const baseUrl = String(opts.baseUrl ?? env.CAELARA_SHIELD_URL ?? DEFAULT_BASE_URL).replace(/\/+$/, '')
   const timeoutMs = Number(opts.timeoutMs ?? env.CAELARA_SHIELD_TIMEOUT_MS ?? DEFAULT_TIMEOUT_MS) || DEFAULT_TIMEOUT_MS
   const fetchImpl = opts.fetch ?? globalThis.fetch
+  // First-Call Fuel: CAELARA_KEY > ~/.caelaralabs/credentials.json > a free trial for this installation > keyless (x402 terms).
+  // Resolved lazily on the first tools/call, so the initialize handshake never waits on the network.
+  const keys = createKeyResolver({
+    env,
+    envName: 'CAELARA_KEY',
+    home: opts.home,
+    identity: opts.identity,
+    fetch: opts.provisionFetch ?? fetchImpl,
+    log: opts.log ?? ((s) => process.stderr.write(s + '\n')),
+  })
+  // Opt-in clearance: none is sent unless the agent ran shield_preflight in this session or CAELARA_CLEARANCE is set.
+  let clearance = CLEARANCE.test(String(env.CAELARA_CLEARANCE ?? '').trim().toLowerCase()) ? String(env.CAELARA_CLEARANCE).trim().toLowerCase() : null
 
   async function callTool(name, args) {
     const req = buildRequest(name, args)
     if (req.error) return toolResult({ error: 'invalid_arguments', message: req.error }, true)
 
     const headers = { 'User-Agent': USER_AGENT, Accept: 'application/json' }
-    const key = env.CAELARA_KEY
+    const key = await keys.get()
     if (key) headers['X-Caelara-Key'] = key
+    if (clearance && name !== 'shield_preflight') headers['X-Caelara-Clearance'] = clearance
     if (req.body !== undefined) headers['Content-Type'] = 'application/json'
 
     const ctl = new AbortController()
@@ -286,13 +197,6 @@ export function createHandler(opts = {}) {
       } catch {
         parsed = text
       }
-      if (KEYLESS_TOOLS.has(name)) {
-        if (isObj(parsed) && parsed.ok === false) {
-          return toolResult({ error: String(parsed.error ?? 'upstream_error'), message: String(parsed.message ?? ''), status: res.status, ...(isObj(parsed.risk) ? { risk: parsed.risk } : {}) }, true)
-        }
-        if (!res.ok) return toolResult({ error: 'upstream_error', status: res.status, details: parsed }, true)
-        return toolResult(name === 'shield_universal_action' ? parsed : trimRouteResponse(parsed, name === 'shield_safe_swap'), false)
-      }
       if (res.status === 402) {
         return toolResult(
           {
@@ -300,7 +204,9 @@ export function createHandler(opts = {}) {
             status: 402,
             message: key
               ? 'The key was not accepted. Check CAELARA_KEY or settle via x402 on the REST routes.'
-              : 'No CAELARA_KEY set. Set CAELARA_KEY to a Caelara API key, or pay per call via x402 on the REST routes (see https://shield.caelaralabs.com/x402-manifest.json).',
+              : 'No Caelara key is available. Run `npx -y @caelaralabs/shield-mcp init` for a free trial, set CAELARA_KEY, or pay per call via x402 on the REST routes (see https://shield.caelaralabs.com/x402-manifest.json).',
+            refill: REFILL,
+            trial: keys.lastError() ? { error: keys.lastError().error, message: keys.lastError().message } : undefined,
             x_payment_required: res.headers.get('x-payment-required') ?? undefined,
             details: parsed,
           },
@@ -308,6 +214,7 @@ export function createHandler(opts = {}) {
         )
       }
       if (!res.ok) return toolResult({ error: 'upstream_error', status: res.status, details: parsed }, true)
+      if (name === 'shield_preflight' && parsed && typeof parsed === 'object' && CLEARANCE.test(String(parsed.clearance_id ?? ''))) clearance = parsed.clearance_id
       return toolResult(parsed, false)
     } catch (e) {
       const timedOut = e && e.name === 'AbortError'

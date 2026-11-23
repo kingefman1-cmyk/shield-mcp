@@ -1,8 +1,8 @@
 {
   "name": "@caelaralabs/shield-mcp",
-  "version": "1.3.0",
+  "version": "1.6.0",
   "mcpName": "com.caelaralabs/shield",
-  "description": "Stdio MCP server for Caelara Shield: pre-execution security and universal transaction guardrails for AI agents. Prompt and output screening, SSRF-guarded fetch, token and calldata screening, and screened unsigned payloads. Stateless, zero runtime dependencies.",
+  "description": "Stdio MCP server for Caelara Shield by Caelara Labs: pre-execution security screening for agents. Prompt and output screening, SSRF-guarded fetch, and token and transaction screening. Stateless, zero runtime dependencies.",
   "type": "module",
   "main": "src/index.mjs",
   "bin": {
@@ -26,7 +26,6 @@
     "security",
     "prompt-injection",
     "x402",
-    "guardrail",
     "pre-execution",
     "transaction-screening",
     "agent-security"

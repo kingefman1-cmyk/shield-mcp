@@ -1,45 +1,53 @@
 ---
 name: caelara-shield
-description: Pre-execution guardrail for wallet actions. Before signing any approval, token route, perp or prediction order, NFT mint or raw transaction, screen it with Caelara Shield and show the risk to the user. Free, no key.
+description: Pre-execution screening with Caelara Shield by Caelara Labs. Before signing a transaction, paying an address or trusting a token, screen it and show the verdict to the user. Also screens untrusted prompts and model output. Needs a Caelara key (free 50-call trial).
 homepage: https://caelaralabs.com/shield/
-metadata: { "openclaw": { "requires": { "bins": ["curl"] } } }
+metadata: { "openclaw": { "requires": { "bins": ["curl"], "env": ["CAELARA_KEY"] } } }
 ---
 
-# Caelara Shield guardrail
+# Caelara Shield screening
 
-Use this skill **before** you sign, approve or submit anything from a wallet, and whenever the user asks whether a transaction, approval or order is safe.
+Use this skill **before** you sign, approve or pay anything from a wallet, and whenever the user asks whether a token, transaction,
+address, prompt or model output is safe.
 
-Caelara Shield screens the action and returns an **unsigned** payload. It never signs, never submits and never needs a private key. Heuristic screening — will miss attacks: "no findings" is not proof of safety.
+Caelara Shield only screens. It never builds, signs or submits a transaction and never needs a private key. Heuristic screening —
+will miss attacks: "no findings" is not proof of safety.
 
-## Call
+Set `CAELARA_KEY` to a Caelara key (free 50-call trial at https://caelaralabs.com/shield/#trial).
+
+## Screen a token, a transaction or a destination
 
 ```bash
-curl -s https://shield.caelaralabs.com/v1/universal/screen-build \
-  -H 'Content-Type: application/json' \
-  -d '{"type":"<type>","strictBlock":false,"params":{...}}'
+curl -s https://shield.caelaralabs.com/v1/shield/tx \
+  -H "X-Caelara-Key: $CAELARA_KEY" -H 'Content-Type: application/json' \
+  -d '{"token":"<token address or Solana mint>","chain":"base","destination":"<address you will pay>","known_addresses":["<addresses you trust>"]}'
 ```
 
-| type | params |
-|---|---|
-| `tx_guardrail` | `chainId` (1, 8453, 42161, 10, 137, 56), `to`, `data`, optional `value`, `from` |
-| `token_route` | `fromChain`, `toChain?`, `tokenIn`, `tokenOut`, `amount` (smallest units), `slippageBps?`, `taker` (to build), `recipient` (EVM <-> Solana) |
-| `perp_order` | `venue: "hyperliquid"`, `coin`, `isBuy`, `size`, `orderType?`, `limitPx?`, `user?`; or `venue: "gmx"` (fields: https://shield.caelaralabs.com/openapi.json) |
-| `prediction_order` | `venue: "polymarket"`, `tokenId`, `side` (BUY/SELL), `price` (0-1), `size`, `maker` |
-| `nft_action` | `venue: "zora"` or `venue: "seaport"` (fields: openapi.json) |
+At least one of `token`, `hash` (an EVM transaction hash) or `destination` is required. `chain` is one of solana, ethereum, base,
+arbitrum, optimism, polygon or bnb (default base). 0.050 USDC per call.
+
+## Screen untrusted text and model output
+
+```bash
+curl -s https://shield.caelaralabs.com/v1/shield/prompt -H "X-Caelara-Key: $CAELARA_KEY" -H 'Content-Type: application/json' -d '{"text":"...","redact":true}'
+curl -s https://shield.caelaralabs.com/v1/shield/output -H "X-Caelara-Key: $CAELARA_KEY" -H 'Content-Type: application/json' -d '{"output":"..."}'
+```
+
+0.015 USDC per call each.
 
 ## Rules
 
-1. **Always show the result before signing.** Show `riskLevel` and every entry in `flags` to the user before anything is signed.
-2. **High risk needs explicit confirmation.** If `riskLevel` is `high`, do not proceed unless the user explicitly confirms after seeing the flags.
-3. **Unattended runs use strict mode.** For treasury or unattended runs, send `"strictBlock": true`: a high-risk action then returns `policy_blocked` and nothing is built.
-4. **Sign only what was screened.** Sign only the returned `unsignedPayload`, with the user's own wallet. Never paste a private key or seed phrase anywhere.
-5. **Mention the fee.** `feeModel` describes any fee or referral. Tell the user when a fee applies (for example the 0.50% on token routes).
-6. **Respect jurisdiction refusals.** `jurisdiction_restricted` means the venue does not allow orders from the user's location. Do not try to work around it.
+1. **Show the verdict before acting.** Show `verdict` (`allow`, `review` or `block`) and every finding to the user before anything is signed.
+2. **`block` means stop.** Do not sign or pay unless the user explicitly confirms after seeing the findings.
+3. **`review` means ask.** Get explicit confirmation from the user first.
+4. **Never paste a private key or seed phrase anywhere.** Shield never asks for one.
 
 ## Alternative: MCP server
 
 ```json
-{ "mcpServers": { "caelara-shield": { "command": "npx", "args": ["-y", "@caelaralabs/shield-mcp"] } } }
+{ "mcpServers": { "caelara-shield": { "command": "npx", "args": ["-y", "@caelaralabs/shield-mcp"], "env": { "CAELARA_KEY": "your-key" } } } }
 ```
 
-The tool is `shield_universal_action`, with the same `type`, `strictBlock` and `params`.
+The tools are `shield_audit_token`, `shield_scan_prompt`, `shield_validate_output` and `shield_proxy_fetch`.
+
+Powered by Caelara Labs · ops@caelaralabs.com
